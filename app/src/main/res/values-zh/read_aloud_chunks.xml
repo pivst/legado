@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="read_aloud_merge_text">合并多段朗读</string>
-    <string name="read_aloud_merge_text_summary">仅网络朗读生效。合并相邻段落，可跨屏幕页；每块音频下载后播放，避免重复合成。优先于整页和流式朗读。</string>
+    <string name="read_aloud_merge_text_summary">仅网络朗读。跨页合并多段，完整下载每块后播放，避免重复合成；优先于整页和流式。</string>
     <string name="read_aloud_target_length">每次朗读字数</string>
-    <string name="read_aloud_target_length_summary">建议 Fish 使用 400 字，优先在段落或句末切分，通常为目标的 75%%–125%%。越大请求越少，首次等待越长。</string>
+    <string name="read_aloud_target_length_summary">建议 400 字；按目标的 75%%–125%% 在段尾或句末切分。字数越多，请求越少，首次等待越长。</string>
     <string-array name="read_aloud_target_entries">
-        <item>200 字</item>
-        <item>300 字</item>
-        <item>400 字（推荐）</item>
-        <item>500 字</item>
-        <item>600 字</item>
-        <item>800 字</item>
-        <item>1000 字</item>
+        <item>200</item>
+        <item>300</item>
+        <item>400</item>
+        <item>500</item>
+        <item>600</item>
+        <item>800</item>
+        <item>1000</item>
     </string-array>
 </resources>
