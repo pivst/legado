@@ -198,6 +198,9 @@ abstract class BaseReadAloudService : BaseService(),
     private val phoneStateListener by lazy {
         ReadAloudPhoneStateListener()
     }
+    protected open val supportsMergedReadAloud = false
+    internal var mergedReadAloudChunks = emptyList<ReadAloudTextChunk>()
+    internal var readAloudTargetLength = 0
     internal var contentList = emptyList<String>()
     internal var nowSpeak: Int = 0
     internal var readAloudNumber: Int = 0
@@ -225,6 +228,8 @@ abstract class BaseReadAloudService : BaseService(),
         val readAloudNumber: Int,
         val readAloudByPage: Boolean,
         val contentList: List<String>,
+        val mergedChunks: List<ReadAloudTextChunk>,
+        val targetLength: Int,
         val nowSpeak: Int,
         val readAloudChapterStart: Int,
         val paragraphStartPos: Int,
@@ -366,10 +371,17 @@ abstract class BaseReadAloudService : BaseService(),
         readAloudJob = execute(executeContext = IO) {
             val textChapter = ReadBook.curTextChapter ?: return@execute
             if (!textChapter.isCompleted) return@execute
-            val readAloudByPage = getPrefBoolean(PreferKey.readAloudByPage)
-            val contentList = textChapter.getNeedReadAloud(0, readAloudByPage, 0)
-                .split("\n")
-                .filter { it.isNotEmpty() }
+            val targetLength = if (supportsMergedReadAloud && AppConfig.readAloudMergeText) {
+                AppConfig.readAloudTargetLength
+            } else 0
+            val readAloudByPage = targetLength == 0 && getPrefBoolean(PreferKey.readAloudByPage)
+            val mergedChunks = buildMergedReadAloudChunks(textChapter, targetLength)
+            val contentList = if (targetLength > 0) mergedChunks.map { it.text } else {
+                textChapter.getNeedReadAloud(0, readAloudByPage, 0)
+                    .split("\n")
+                    .filter { it.isNotEmpty() }
+            }
+            if (contentList.isEmpty()) return@execute
             var readAloudNumber = textChapter.getReadLength(pageIndex) + startPos
             if (shouldRewindReadAloudToSentenceStart(rewindToSentenceStart, toLast)) {
                 val paragraphIndex = textChapter.getParagraphNum(readAloudNumber + 1, false) - 1
@@ -380,14 +392,24 @@ abstract class BaseReadAloudService : BaseService(),
                 readAloudNumber = paragraph.chapterPosition + sentenceStart
             }
             if (toLast) readAloudNumber = textChapter.getLastParagraphPosition()
-            val nowSpeak = textChapter.getParagraphNum(readAloudNumber + 1, readAloudByPage) - 1
-            val pos = readAloudNumber - textChapter.getParagraphs(readAloudByPage)[nowSpeak].chapterPosition
+            val nowSpeak: Int
+            val pos: Int
+            if (mergedChunks.isNotEmpty()) {
+                readAloudNumber = readAloudNumber.coerceIn(0, mergedChunks.last().end - 1)
+                nowSpeak = mergedChunks.chunkIndexAt(readAloudNumber)
+                pos = readAloudNumber - mergedChunks[nowSpeak].start
+            } else {
+                nowSpeak = textChapter.getParagraphNum(readAloudNumber + 1, readAloudByPage) - 1
+                pos = readAloudNumber - textChapter.getParagraphs(readAloudByPage)[nowSpeak].chapterPosition
+            }
             val prepared = PreparedReadAloud(
                 textChapter = textChapter,
                 pageIndex = textChapter.getPageIndexByCharIndex(readAloudNumber),
                 readAloudNumber = readAloudNumber,
                 readAloudByPage = readAloudByPage,
                 contentList = contentList,
+                mergedChunks = mergedChunks,
+                targetLength = targetLength,
                 nowSpeak = nowSpeak,
                 readAloudChapterStart = readAloudNumber,
                 paragraphStartPos = pos,
@@ -401,6 +423,8 @@ abstract class BaseReadAloudService : BaseService(),
                 this@BaseReadAloudService.readAloudNumber = prepared.readAloudNumber
                 this@BaseReadAloudService.readAloudByPage = prepared.readAloudByPage
                 this@BaseReadAloudService.contentList = prepared.contentList
+                this@BaseReadAloudService.mergedReadAloudChunks = prepared.mergedChunks
+                this@BaseReadAloudService.readAloudTargetLength = prepared.targetLength
                 this@BaseReadAloudService.nowSpeak = prepared.nowSpeak
                 updateReadAloudChapterIndex(prepared.textChapter.chapter.index)
                 BaseReadAloudService.readAloudChapterStart = prepared.readAloudChapterStart
@@ -471,7 +495,45 @@ abstract class BaseReadAloudService : BaseService(),
         postEvent(EventBus.TTS_PROGRESS, progress)
     }
 
+    internal fun buildMergedReadAloudChunks(chapter: TextChapter, target: Int) =
+        if (target > 0) splitReadAloudText(chapter.getNeedReadAloud(0, false, 0), target)
+        else emptyList()
+
+    /** Keep the existing paragraph buttons meaningful even when one request spans several. */
+    private fun navigateMergedParagraph(forward: Boolean): Boolean {
+        if (mergedReadAloudChunks.isEmpty()) return false
+        val chapter = textChapter ?: return true
+        val position = readAloudChapterStart.coerceAtLeast(readAloudNumber)
+        val paragraphs = chapter.getParagraphs(false)
+        val current = paragraphs.indexOfLast { it.chapterPosition <= position }.coerceAtLeast(0)
+        val target = paragraphs.getOrNull(current + if (forward) 1 else -1)
+        if (target == null) {
+            if (forward) nextChapter() else {
+                toLast = true
+                ReadBook.moveToPrevChapter(true, syncReadAloudFollow = true)
+            }
+            return true
+        }
+        playStop()
+        readAloudNumber = target.chapterPosition
+        nowSpeak = mergedReadAloudChunks.chunkIndexAt(readAloudNumber)
+        paragraphStartPos = readAloudNumber - mergedReadAloudChunks[nowSpeak].start
+        val targetPage = chapter.getPageIndexByCharIndex(readAloudNumber)
+        while (pageIndex < targetPage) {
+            pageIndex++
+            ReadBook.moveToNextPage(syncReadAloudFollow = true)
+        }
+        while (pageIndex > targetPage) {
+            pageIndex--
+            ReadBook.moveToPrevPage(syncReadAloudFollow = true)
+        }
+        upTtsProgress(readAloudNumber)
+        play()
+        return true
+    }
+
     private fun prevP() {
+        if (navigateMergedParagraph(forward = false)) return
         if (nowSpeak > 0) {
             playStop()
             do {
@@ -498,6 +560,7 @@ abstract class BaseReadAloudService : BaseService(),
     }
 
     private fun nextP() {
+        if (navigateMergedParagraph(forward = true)) return
         if (nowSpeak < contentList.size - 1) {
             playStop()
             readAloudNumber += contentList[nowSpeak].length.plus(1) - paragraphStartPos
@@ -920,9 +983,12 @@ abstract class BaseReadAloudService : BaseService(),
             readAloudNumber = 0
             nowSpeak = 0
             paragraphStartPos = 0
-            contentList = nextTextChapter.getNeedReadAloud(0, readAloudByPage, 0)
-                .split("\n")
-                .filter { it.isNotEmpty() }
+            mergedReadAloudChunks = buildMergedReadAloudChunks(nextTextChapter, readAloudTargetLength)
+            contentList = if (readAloudTargetLength > 0) mergedReadAloudChunks.map { it.text } else {
+                nextTextChapter.getNeedReadAloud(0, readAloudByPage, 0)
+                    .split("\n")
+                    .filter { it.isNotEmpty() }
+            }
             contentList.isNotEmpty()
         }.onSuccess(Main) { canContinue ->
             if (canContinue) {

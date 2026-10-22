@@ -36,6 +36,23 @@
 
         <io.legado.app.lib.prefs.SwitchPreference
             android:defaultValue="false"
+            android:key="readAloudMergeText"
+            android:title="@string/read_aloud_merge_text"
+            android:summary="@string/read_aloud_merge_text_summary"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.NameListPreference
+            android:key="readAloudTargetLength"
+            android:dependency="readAloudMergeText"
+            android:defaultValue="400"
+            android:title="@string/read_aloud_target_length"
+            android:summary="@string/read_aloud_target_length_summary"
+            android:entries="@array/read_aloud_target_entries"
+            android:entryValues="@array/read_aloud_target_values"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="false"
             android:title="@string/read_aloud_by_page"
             android:summary="@string/read_aloud_by_page_summary"
             android:key="readAloudByPage"

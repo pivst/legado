@@ -58,6 +58,8 @@ import io.legado.app.model.localBook.TextFile
 import io.legado.app.service.BaseReadAloudService
 import io.legado.app.service.TTSReadAloudService
 import io.legado.app.service.HttpReadAloudService
+import io.legado.app.service.splitReadAloudText
+import io.legado.app.service.generateSilentWavBytes
 import io.legado.app.ui.book.read.config.ClickActionConfigDialog
 import io.legado.app.ui.book.read.config.ReadAloudControlsDialog
 import io.legado.app.ui.book.read.config.ReadAloudConfigDialog
@@ -107,7 +109,8 @@ class ReadAloudMenuUiTest {
         PreferKey.readAloudControlsX, PreferKey.readAloudControlsY,
         PreferKey.readAloudWakeLock, PreferKey.ttsTimer, PreferKey.readAloudStart,
         PreferKey.preDownloadNum, PreferKey.cronet,
-        PreferKey.readAloudByPage, PreferKey.contentSelectSpeakMod,
+        PreferKey.readAloudByPage, PreferKey.readAloudMergeText, PreferKey.readAloudTargetLength,
+        PreferKey.contentSelectSpeakMod,
         PreferKey.textSelectMenuConfig, PreferKey.longPressSelectParagraph,
         PreferKey.streamReadAloudAudio).associateWith { prefs.all[it] }
     private val savedRunning = BaseReadAloudService.isRun
@@ -821,6 +824,130 @@ class ReadAloudMenuUiTest {
         } finally {
             context.stopService(Intent(context, HttpReadAloudService::class.java))
             await("HTTP selection service cleaned up") { readAloudService(HttpReadAloudService::class.java) == null }
+            scenario!!.onActivity { ReadBook.book!!.setTtsEngine(""); ReadAloud.upReadAloudClass() }
+            appDb.httpTTSDao.delete(engine)
+            server.stop()
+            if (!wasBatteryExempt) shell("dumpsys deviceidle whitelist -${context.packageName}")
+        }
+    }
+
+    @Test fun mergedReadAloudSettingsKeepThresholdAndPageModeConsistent() {
+        val originalEngine = ReadAloud.httpTTS
+        try {
+            prefs.edit().putBoolean(PreferKey.readAloudMergeText, false)
+                .putString(PreferKey.readAloudTargetLength, "400").commit()
+            scenario!!.onActivity { activity ->
+                ReadAloud.httpTTS = HttpTTS(name = "Settings fixture", url = "http://127.0.0.1")
+                ReadAloudConfigDialog().show(activity.supportFragmentManager, "merge-settings")
+            }
+            fun fragment(activity: ReadBookActivity) = activity.supportFragmentManager
+                .findFragmentByTag("merge-settings")?.childFragmentManager
+                ?.findFragmentByTag("readAloudPreferTag") as? ReadAloudConfigDialog.ReadAloudPreferenceFragment
+            await("merge settings visible") { fragment(it)?.findPreference<androidx.preference.Preference>(
+                PreferKey.readAloudMergeText) != null }
+            scenario!!.onActivity { activity ->
+                val settings = checkNotNull(fragment(activity))
+                val target = settings.findPreference<androidx.preference.ListPreference>(PreferKey.readAloudTargetLength)!!
+                assertFalse(target.isEnabled)
+                assertEquals("400", target.value)
+                settings.findPreference<io.legado.app.lib.prefs.SwitchPreference>(PreferKey.readAloudMergeText)!!.isChecked = true
+                assertTrue(target.isEnabled)
+                assertFalse(settings.findPreference<androidx.preference.Preference>(PreferKey.readAloudByPage)!!.isEnabled)
+                assertFalse(settings.findPreference<androidx.preference.Preference>(PreferKey.streamReadAloudAudio)!!.isEnabled)
+                target.value = "500"
+                assertEquals(500, AppConfig.readAloudTargetLength)
+                val adapter = settings.listView.adapter as androidx.preference.PreferenceGroupAdapter
+                val layout = settings.listView.layoutManager as androidx.recyclerview.widget.LinearLayoutManager
+                layout.scrollToPositionWithOffset(adapter.getPreferenceAdapterPosition(PreferKey.readAloudMergeText), 0)
+            }
+            screenshot("aloud-merged-settings")
+            scenario!!.onActivity { activity ->
+                val settings = checkNotNull(fragment(activity))
+                settings.findPreference<io.legado.app.lib.prefs.SwitchPreference>(PreferKey.readAloudMergeText)!!.isChecked = false
+                assertTrue(settings.findPreference<androidx.preference.Preference>(PreferKey.readAloudByPage)!!.isEnabled)
+                (activity.supportFragmentManager.findFragmentByTag("merge-settings") as ReadAloudConfigDialog).dismiss()
+            }
+        } finally {
+            ReadAloud.httpTTS = originalEngine
+        }
+    }
+
+    @Test fun mergedHttpRequestsPreserveTextAndProgressInBothPlaybackModes() {
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        val wav = generateSilentWavBytes(1500)
+        val server = object : NanoHTTPD("127.0.0.1", 0) {
+            override fun serve(session: IHTTPSession): Response {
+                requests.add(session.parameters["text"]?.firstOrNull().orEmpty())
+                // Make prefetch/playback overlap: one synthesis per cache key is required.
+                SystemClock.sleep(150)
+                return newFixedLengthResponse(Response.Status.OK, "audio/wav", wav.inputStream(), wav.size.toLong())
+            }
+        }.also { it.start() }
+        val engine = HttpTTS(name = "Merged HTTP ${System.nanoTime()}",
+            url = "http://127.0.0.1:${server.listeningPort}/speech?text={{java.encodeURI(speakText)}}")
+        appDb.httpTTSDao.insert(engine)
+        shell("pm grant ${context.packageName} $notificationPermission")
+        shell("dumpsys deviceidle whitelist +${context.packageName}")
+        try {
+            for (streaming in listOf(false, true)) {
+                prefs.edit().putBoolean(PreferKey.cronet, false)
+                    .putBoolean(PreferKey.streamReadAloudAudio, streaming)
+                    .putBoolean(PreferKey.readAloudMergeText, true)
+                    .putString(PreferKey.readAloudTargetLength, "400")
+                    .putBoolean(PreferKey.readAloudByPage, true)
+                    .putBoolean(PreferKey.readAloudWakeLock, false)
+                    .putInt(PreferKey.ttsTimer, 0).commit()
+                engine.url += "&mode=$streaming"
+                appDb.httpTTSDao.update(engine)
+                requests.clear()
+                val text = ReadBook.curTextChapter!!.getNeedReadAloud(0, false, 0)
+                val expected = splitReadAloudText(text, 400)
+                // Start inside the first merged block, as a selection or resumed cursor does.
+                val start = 80
+                scenario!!.onActivity { activity ->
+                    ReadBook.book!!.setTtsEngine(engine.id.toString())
+                    ReadAloud.upReadAloudClass()
+                    ReadAloud.play(activity, pageIndex = 0, startPos = start)
+                }
+                await("merged HTTP service starts") {
+                    readAloudService(HttpReadAloudService::class.java) != null && requests.isNotEmpty()
+                }
+                assertEquals(expected.first().text.substring(start), requests.first())
+                assertTrue(requests.first().contains("\n"))
+                scenario!!.onActivity {
+                    val service = checkNotNull(readAloudService(HttpReadAloudService::class.java))
+                    assertFalse(service.readAloudByPage)
+                    assertEquals(expected, service.mergedReadAloudChunks)
+                    assertEquals(start, service.paragraphStartPos)
+                }
+                await("three merged blocks play through the real player") {
+                    val service = readAloudService(HttpReadAloudService::class.java) as? HttpReadAloudService
+                    service != null && service.nowSpeak >= 2 &&
+                        ReadAloud.readAloudChapterStart >= expected[2].start && service.pageIndex > 0
+                }
+                scenario!!.onActivity {
+                    val service = readAloudService(HttpReadAloudService::class.java) as HttpReadAloudService
+                    assertEquals(expected[service.nowSpeak].start, service.readAloudNumber)
+                    service.pauseReadAloud()
+                }
+                val pausedAt = ReadAloud.readAloudChapterStart
+                SystemClock.sleep(250)
+                assertEquals(pausedAt, ReadAloud.readAloudChapterStart)
+                scenario!!.onActivity {
+                    (readAloudService(HttpReadAloudService::class.java) as HttpReadAloudService).resumeReadAloud()
+                }
+                await("all chapter chunks requested") { requests.size >= expected.size }
+                assertEquals("One synthesis per merged block, streaming preference=$streaming",
+                    listOf(expected.first().text.substring(start)) + expected.drop(1).map { it.text },
+                    synchronized(requests) { requests.toList() })
+                context.stopService(Intent(context, HttpReadAloudService::class.java))
+                await("merged HTTP service stops") {
+                    readAloudService(HttpReadAloudService::class.java) == null && !BaseReadAloudService.isRun
+                }
+            }
+        } finally {
+            context.stopService(Intent(context, HttpReadAloudService::class.java))
+            await("merged HTTP cleanup") { readAloudService(HttpReadAloudService::class.java) == null }
             scenario!!.onActivity { ReadBook.book!!.setTtsEngine(""); ReadAloud.upReadAloudClass() }
             appDb.httpTTSDao.delete(engine)
             server.stop()

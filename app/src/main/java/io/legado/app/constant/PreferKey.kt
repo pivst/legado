@@ -54,6 +54,8 @@ object PreferKey {
     const val precisionSearch = "precisionSearch"
     const val searchResultFilter = "searchResultFilter"
     const val readAloudStart = "readAloudStart"
+    const val readAloudMergeText = "readAloudMergeText"
+    const val readAloudTargetLength = "readAloudTargetLength"
     const val readAloudByPage = "readAloudByPage"
     const val readAloudFollowManualPage = "readAloudFollowManualPage"
     const val readAloudControlsRealtime = "readAloudControlsRealtime"

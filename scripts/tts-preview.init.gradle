@@ -1,0 +1,10 @@
+// Isolated test APK: upstream Rhino uses MethodHandle.invoke, which D8 requires API 26 for.
+// Keep the repository's release minSdk unchanged.
+allprojects { project ->
+    project.plugins.withId('com.android.application') {
+        project.androidComponents.finalizeDsl { android ->
+            android.defaultConfig.minSdk = 26
+            android.buildTypes.debug.manifestPlaceholders.put('app_name', '阅读·合并听书')
+        }
+    }
+}

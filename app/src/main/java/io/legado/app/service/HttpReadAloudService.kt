@@ -157,6 +157,14 @@ internal fun buildHttpTtsCacheFileName(
 @SuppressLint("UnsafeOptInUsageError")
 class HttpReadAloudService : BaseReadAloudService(),
     Player.Listener {
+    override val supportsMergedReadAloud = true
+
+    // Synthesis is a POST, not a seekable media URL. Media3 can reopen a partial cache
+    // range during sniffing/seeking, which would synthesize the same text again.
+    // Cache each merged response completely before exposing it to the player.
+    private val useStreamingPlayback: Boolean
+        get() = AppConfig.streamReadAloudAudio && readAloudTargetLength == 0
+
     private val exoPlayer: ExoPlayer by lazy {
         ExoPlayer.Builder(this).build()
     }
@@ -211,7 +219,7 @@ class HttpReadAloudService : BaseReadAloudService(),
             ReadBook.readAloud()
         } else {
             super.play()
-            if (AppConfig.streamReadAloudAudio) {
+            if (useStreamingPlayback) {
                 downloadAndPlayAudiosStream()
             } else {
                 downloadAndPlayAudios()
@@ -228,7 +236,8 @@ class HttpReadAloudService : BaseReadAloudService(),
     }
 
     private fun updateNextPos() {
-        readAloudNumber += contentList[nowSpeak].length + 1 - paragraphStartPos
+        readAloudNumber = mergedReadAloudChunks.getOrNull(nowSpeak)?.end
+            ?: (readAloudNumber + contentList[nowSpeak].length + 1 - paragraphStartPos)
         paragraphStartPos = 0
         if (nowSpeak < contentList.lastIndex) {
             nowSpeak++
@@ -300,13 +309,19 @@ class HttpReadAloudService : BaseReadAloudService(),
         }
     }
 
+    private fun preDownloadContents(chapter: TextChapter): List<String> {
+        if (readAloudTargetLength > 0) {
+            // Partial layout would produce different boundaries and unusable cache entries.
+            if (!chapter.isCompleted) return emptyList()
+            return buildMergedReadAloudChunks(chapter, readAloudTargetLength).take(2).map { it.text }
+        }
+        return chapter.getNeedReadAloud(0, readAloudByPage, 0, 1)
+            .splitToSequence("\n").filter { it.isNotEmpty() }.take(10).toList()
+    }
+
     private suspend fun preDownloadAudios(httpTts: HttpTTS, sessionId: Long) {
         val textChapter = ReadBook.nextTextChapter ?: return
-        val contentList = textChapter.getNeedReadAloud(0, readAloudByPage, 0, 1)
-            .splitToSequence("\n")
-            .filter { it.isNotEmpty() }
-            .take(10)
-            .toList()
+        val contentList = preDownloadContents(textChapter)
         contentList.forEach { content ->
             currentCoroutineContext().ensureActive()
             val fileName = md5SpeakFileName(content, textChapter)
@@ -405,11 +420,7 @@ class HttpReadAloudService : BaseReadAloudService(),
         sessionId: Long
     ) {
         val textChapter = ReadBook.nextTextChapter ?: return
-        val contentList = textChapter.getNeedReadAloud(0, readAloudByPage, 0, 1)
-            .splitToSequence("\n")
-            .filter { it.isNotEmpty() }
-            .take(10)
-            .toList()
+        val contentList = preDownloadContents(textChapter)
         contentList.forEach { content ->
             currentCoroutineContext().ensureActive()
             val fileName = md5SpeakFileName(content, textChapter)
@@ -697,27 +708,26 @@ class HttpReadAloudService : BaseReadAloudService(),
 
     private fun upPlayPos() {
         playIndexJob?.cancel()
-        val textChapter = textChapter ?: return
+        val chapter = textChapter ?: return
+        if (isPauseMediaItem(exoPlayer.currentMediaItem)) return
+        val index = nowSpeak
+        val length = contentList.getOrNull(index)?.length ?: return
+        val skipped = paragraphStartPos
+        val start = readAloudNumber - skipped
+        val sessionId = playbackSessionId.get()
         playIndexJob = lifecycleScope.launch {
-            upTtsProgress(readAloudNumber)
-            if (exoPlayer.duration <= 0) {
-                return@launch
-            }
-            val speakTextLength = contentList[nowSpeak].length
-            if (speakTextLength <= 0) {
-                return@launch
-            }
-            val sleep = exoPlayer.duration / speakTextLength
-            val start = speakTextLength * exoPlayer.currentPosition / exoPlayer.duration
-            for (i in start..contentList[nowSpeak].length) {
-                if (pageIndex + 1 < textChapter.pageSize
-                    && readAloudNumber + i > textChapter.getReadLength(pageIndex + 1)
-                ) {
+            while (isSessionActive(sessionId) && nowSpeak == index && !pause) {
+                val offset = httpTtsProgressOffset(
+                    length, skipped, exoPlayer.currentPosition, exoPlayer.duration
+                )
+                val progress = start + offset
+                while (pageIndex + 1 < chapter.pageSize &&
+                    progress >= chapter.getReadLength(pageIndex + 1)) {
                     pageIndex++
                     ReadBook.moveToNextPage(syncReadAloudFollow = true)
-                    upTtsProgress(readAloudNumber + i.toInt())
                 }
-                delay(sleep)
+                upTtsProgress(progress)
+                delay(100)
             }
         }
     }
@@ -728,7 +738,7 @@ class HttpReadAloudService : BaseReadAloudService(),
     override fun upSpeechRate(reset: Boolean) {
         playStop()
         speechRate = AppConfig.speechRatePlay + 5
-        if (AppConfig.streamReadAloudAudio) {
+        if (useStreamingPlayback) {
             downloadAndPlayAudiosStream()
         } else {
             downloadAndPlayAudios()
@@ -786,7 +796,10 @@ class HttpReadAloudService : BaseReadAloudService(),
             playErrorNo = 0
         }
         trimPlayedMediaItems()
-        if (isPauseMediaItem(mediaItem)) return
+        if (isPauseMediaItem(mediaItem)) {
+            playIndexJob?.cancel()
+            return
+        }
         updateNextPos()
         upPlayPos()
     }
@@ -825,7 +838,7 @@ class HttpReadAloudService : BaseReadAloudService(),
     }
 
     private fun deleteCurrentSpeakFile() {
-        if (AppConfig.streamReadAloudAudio) {
+        if (useStreamingPlayback) {
             return
         }
         val mediaItem = exoPlayer.currentMediaItem ?: return

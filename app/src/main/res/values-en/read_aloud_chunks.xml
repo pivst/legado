@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="read_aloud_merge_text">Merge paragraphs</string>
+    <string name="read_aloud_merge_text_summary">Online voices only. Merge across screen pages and cache each audio chunk before playing to avoid duplicate synthesis. Overrides page-based and streaming modes.</string>
+    <string name="read_aloud_target_length">Target length</string>
+    <string name="read_aloud_target_length_summary">Try 400 for Fish. Prefer paragraph or sentence boundaries within 75%%–125%% of the target. Larger chunks reduce requests but increase initial waiting.</string>
+    <string-array name="read_aloud_target_entries">
+        <item>200 characters</item>
+        <item>300 characters</item>
+        <item>400 characters (recommended)</item>
+        <item>500 characters</item>
+        <item>600 characters</item>
+        <item>800 characters</item>
+        <item>1000 characters</item>
+    </string-array>
+</resources>

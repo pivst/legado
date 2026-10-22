@@ -813,6 +813,10 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
 
     val updateToVariant get() = appCtx.getPrefString(PreferKey.updateToVariant, "default_version")
 
+    val readAloudMergeText get() = appCtx.getPrefBoolean(PreferKey.readAloudMergeText, false)
+    val readAloudTargetLength get() = appCtx.getPrefString(PreferKey.readAloudTargetLength, "400")
+        ?.toIntOrNull()?.coerceIn(100, 1000) ?: 400
+
     val streamReadAloudAudio get() = appCtx.getPrefBoolean(PreferKey.streamReadAloudAudio, false)
 
     var audioSkipOpenCredits: Int

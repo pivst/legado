@@ -101,7 +101,9 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
             key: String?
         ) {
             when (key) {
-                PreferKey.readAloudByPage, PreferKey.streamReadAloudAudio -> {
+                PreferKey.readAloudByPage, PreferKey.streamReadAloudAudio,
+                PreferKey.readAloudMergeText, PreferKey.readAloudTargetLength -> {
+                    upReadAloudChunkPreferences()
                     if (BaseReadAloudService.isRun) {
                         postEvent(EventBus.MEDIA_BUTTON, false)
                     }
@@ -113,6 +115,12 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
                     }
                 }
             }
+        }
+
+        private fun upReadAloudChunkPreferences() {
+            val mergeActive = AppConfig.readAloudMergeText && ReadAloud.httpTTS != null
+            findPreference<SwitchPreference>(PreferKey.readAloudByPage)?.isEnabled = !mergeActive
+            findPreference<SwitchPreference>(PreferKey.streamReadAloudAudio)?.isEnabled = !mergeActive
         }
 
         private fun upPreferenceSummary(preference: Preference?, value: String) {
@@ -129,6 +137,7 @@ class ReadAloudConfigDialog : BasePrefDialogFragment() {
         }
 
         override fun upSpeakEngineSummary() {
+            upReadAloudChunkPreferences()
             upPreferenceSummary(
                 findPreference(PreferKey.ttsEngine),
                 speakEngineSummary

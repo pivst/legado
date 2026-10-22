@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="read_aloud_merge_text">合併多段朗讀</string>
+    <string name="read_aloud_merge_text_summary">僅網路朗讀生效。合併相鄰段落，可跨螢幕頁；每塊音訊下載後播放，避免重複合成。優先於整頁和串流朗讀。</string>
+    <string name="read_aloud_target_length">每次朗讀字數</string>
+    <string name="read_aloud_target_length_summary">建議 Fish 使用 400 字，優先於段落或句末切分，通常為目標的 75%%–125%%。越大請求越少，首次等待越長。</string>
+</resources>
