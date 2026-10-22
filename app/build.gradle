@@ -11,7 +11,12 @@ plugins {
     alias libs.plugins.kotlin.parcelize
     alias libs.plugins.room
     alias libs.plugins.ksp
-    alias libs.plugins.google.services
+    alias libs.plugins.google.services apply false
+}
+// Independent TTS fork: do not reuse the upstream Firebase project for a new package.
+def ttsFork = providers.gradleProperty('ttsFork').map { it.toBoolean() }.getOrElse(false)
+if (!ttsFork) {
+    apply plugin: 'com.google.gms.google-services'
 }
 apply from: 'download.gradle'
 apply from: 'cronet-loader.gradle'
@@ -63,7 +68,7 @@ android {
         }
     }
     defaultConfig {
-        applicationId "com.legado.app"
+        applicationId ttsFork ? 'org.pivst.legado.tts' : 'com.legado.app'
         minSdk 23
         targetSdk 36
         versionCode = versionCodeValue
@@ -112,8 +117,10 @@ android {
             if (project.hasProperty("RELEASE_STORE_FILE")) {
                 signingConfig = signingConfigs.myConfig
             }
-            applicationIdSuffix '.release'
-            if (getApplicationIdSuffix() == '.releaseA') {
+            applicationIdSuffix ttsFork ? '' : '.release'
+            if (ttsFork) {
+                manifestPlaceholders.put('app_name', '阅读·合并听书')
+            } else if (getApplicationIdSuffix() == '.releaseA') {
                 manifestPlaceholders.put("app_name", "@string/app_name_a")
             } else {
                 manifestPlaceholders.put("app_name", "@string/app_name")
@@ -361,9 +368,11 @@ dependencies {
     }
 
     //firebase, 崩溃统计和性能统计
-    implementation platform(libs.firebase.bom)
-    implementation libs.firebase.analytics
-    implementation libs.firebase.perf
+    if (!ttsFork) {
+        implementation platform(libs.firebase.bom)
+        implementation libs.firebase.analytics
+        implementation libs.firebase.perf
+    }
 
     implementation libs.glide.recyclerview
 

@@ -25,6 +25,8 @@ Legado 是一款免费的 Android 平台开源小说阅读器。
 
 开发预览可用 `./gradlew -I scripts/tts-preview.init.gradle :app:testAppDebugUnitTest :app:assembleAppDebug` 构建。此显式配置将预览包最低版本设为 Android 8（API 26），绕过上游 Rhino 在未压缩调试构建中的 MethodHandle/D8 限制；包名为 `com.legado.app.debug`，显示名为「阅读·合并听书」。正式构建配置未改变。
 
+独立 Release 使用 `./gradlew -PttsFork=true :app:assembleAppRelease`：包名 `org.pivst.legado.tts`，显示名「阅读·合并听书」，保留上游的 Android 6（API 23）最低版本、R8 代码优化和资源裁剪。由于新包名未注册上游 Firebase 项目，此构建不接入上游 Firebase 统计。未提供签名属性时生成 unsigned APK，可在本地使用自己的发布证书签名；私钥及密码不得提交到仓库。新包名与原版、之前的 Debug 包并存，不会自动继承它们的数据。省略 `ttsFork` 时保留上游的包名和 Firebase 配置。
+
 # Sponsor
 
 > 感谢 [PiPio 中转站](https://pipio.io/offer/miaogongzi) 对项目的赞助支持。
