@@ -119,7 +119,7 @@ android {
             }
             applicationIdSuffix ttsFork ? '' : '.release'
             if (ttsFork) {
-                manifestPlaceholders.put('app_name', '阅读·合并听书')
+                manifestPlaceholders.put('app_name', '阅读 pivst')
             } else if (getApplicationIdSuffix() == '.releaseA') {
                 manifestPlaceholders.put("app_name", "@string/app_name_a")
             } else {
