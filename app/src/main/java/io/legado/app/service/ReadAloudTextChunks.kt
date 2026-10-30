@@ -5,9 +5,9 @@ internal data class ReadAloudTextChunk(val text: String, val start: Int) {
     val end: Int get() = start + text.length
 }
 
-internal const val DEFAULT_READ_ALOUD_TARGET = 400
+internal const val DEFAULT_READ_ALOUD_TARGET = 1200
 
-internal fun normalizeReadAloudTarget(value: Int): Int = value.coerceIn(100, 1000)
+internal fun normalizeReadAloudTarget(value: Int): Int = value.coerceIn(100, 1200)
 
 /**
  * Merge across screen pages. Prefer a paragraph, then a sentence boundary within 75–125%
@@ -15,7 +15,11 @@ internal fun normalizeReadAloudTarget(value: Int): Int = value.coerceIn(100, 100
  * Concatenating the chunks always reproduces the original chapter, byte for byte.
  */
 internal fun splitReadAloudText(text: String, target: Int = DEFAULT_READ_ALOUD_TARGET): List<ReadAloudTextChunk> {
-    val size = normalizeReadAloudTarget(target)
+    // 1200 selects chapter-aware mode; fixed targets retain their old boundaries.
+    val automatic = target == DEFAULT_READ_ALOUD_TARGET
+    if (automatic && text.length <= 1200) return if (text.isEmpty()) emptyList() else listOf(ReadAloudTextChunk(text, 0))
+    val parts = (text.length + 1199) / 1200
+    val size = if (automatic) (text.length + parts - 1) / parts else normalizeReadAloudTarget(target)
     val minimum = size * 3 / 4
     val maximum = size * 5 / 4
     val result = ArrayList<ReadAloudTextChunk>()

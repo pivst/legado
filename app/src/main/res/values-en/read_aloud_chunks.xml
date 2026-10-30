@@ -3,8 +3,9 @@
     <string name="read_aloud_merge_text">Merge paragraphs</string>
     <string name="read_aloud_merge_text_summary">Online voices: combine paragraphs across pages. Cache each chunk before playing; overrides page and streaming modes.</string>
     <string name="read_aloud_target_length">Target length</string>
-    <string name="read_aloud_target_length_summary">Fish: try 400. Cut near paragraph or sentence ends (75%%–125%% of target). Larger values mean fewer requests and longer initial waits.</string>
+    <string name="read_aloud_target_length_summary">Smart chapters: whole short chapters, about 1200 characters per long-chapter chunk. Short cold start; prefetch while playing.</string>
     <string-array name="read_aloud_target_entries">
+        <item>Smart chapter</item>
         <item>200</item>
         <item>300</item>
         <item>400</item>

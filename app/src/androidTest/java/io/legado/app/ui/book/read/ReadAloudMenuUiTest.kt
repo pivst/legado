@@ -955,6 +955,95 @@ class ReadAloudMenuUiTest {
         }
     }
 
+    @Test fun smartChapterPrefetchPreservesTextAndProgress() {
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        val wav = generateSilentWavBytes(1500)
+        val server = object : NanoHTTPD("127.0.0.1", 0) {
+            override fun serve(session: IHTTPSession): Response {
+                requests.add(session.parameters["text"]?.firstOrNull().orEmpty())
+                // Make prefetch/playback overlap: one synthesis per cache key is required.
+                SystemClock.sleep(150)
+                return newFixedLengthResponse(Response.Status.OK, "audio/wav", wav.inputStream(), wav.size.toLong())
+            }
+        }.also { it.start() }
+        val engine = HttpTTS(name = "Merged HTTP ${System.nanoTime()}",
+            url = "http://127.0.0.1:${server.listeningPort}/speech?text={{java.encodeURI(speakText)}}")
+        appDb.httpTTSDao.insert(engine)
+        shell("pm grant ${context.packageName} $notificationPermission")
+        shell("dumpsys deviceidle whitelist +${context.packageName}")
+        try {
+            for (streaming in listOf(false, true)) {
+                prefs.edit().putBoolean(PreferKey.cronet, false)
+                    .putBoolean(PreferKey.streamReadAloudAudio, streaming)
+                    .putBoolean(PreferKey.readAloudMergeText, true)
+                    .putString(PreferKey.readAloudTargetLength, "1200")
+                    .putBoolean(PreferKey.readAloudByPage, true)
+                    .putBoolean(PreferKey.readAloudWakeLock, false)
+                    .putInt(PreferKey.ttsTimer, 0).commit()
+                engine.url += "&mode=$streaming"
+                appDb.httpTTSDao.update(engine)
+                requests.clear()
+                val text = ReadBook.curTextChapter!!.getNeedReadAloud(0, false, 0)
+                val expected = splitReadAloudText(text, 1200).toMutableList()
+                val head = expected.first()
+                val cut = 80 + splitReadAloudText(head.text.substring(80), 400).first().text.length
+                if (head.text.length - 80 > 500) {
+                    expected[0] = io.legado.app.service.ReadAloudTextChunk(head.text.substring(0, cut), 0)
+                    expected.add(1, io.legado.app.service.ReadAloudTextChunk(head.text.substring(cut), cut))
+                }
+                // Start inside the first merged block, as a selection or resumed cursor does.
+                val start = 80
+                scenario!!.onActivity { activity ->
+                    ReadBook.book!!.setTtsEngine(engine.id.toString())
+                    ReadAloud.upReadAloudClass()
+                    ReadAloud.play(activity, pageIndex = 0, startPos = start)
+                }
+                await("merged HTTP service starts") {
+                    readAloudService(HttpReadAloudService::class.java) != null && requests.isNotEmpty()
+                }
+                assertEquals(expected.first().text.substring(start), requests.first())
+                assertTrue(requests.first().contains("\n"))
+                scenario!!.onActivity {
+                    val service = checkNotNull(readAloudService(HttpReadAloudService::class.java))
+                    assertFalse(service.readAloudByPage)
+                    assertEquals(expected, service.mergedReadAloudChunks)
+                    assertEquals(start, service.paragraphStartPos)
+                }
+                await("three merged blocks play through the real player") {
+                    val service = readAloudService(HttpReadAloudService::class.java) as? HttpReadAloudService
+                    service != null && service.nowSpeak >= 2 &&
+                        ReadAloud.readAloudChapterStart >= expected[2].start && service.pageIndex > 0
+                }
+                scenario!!.onActivity {
+                    val service = readAloudService(HttpReadAloudService::class.java) as HttpReadAloudService
+                    assertEquals(expected[service.nowSpeak].start, service.readAloudNumber)
+                    service.pauseReadAloud()
+                }
+                val pausedAt = ReadAloud.readAloudChapterStart
+                SystemClock.sleep(250)
+                assertEquals(pausedAt, ReadAloud.readAloudChapterStart)
+                scenario!!.onActivity {
+                    (readAloudService(HttpReadAloudService::class.java) as HttpReadAloudService).resumeReadAloud()
+                }
+                await("all chapter chunks requested") { requests.size >= expected.size }
+                assertEquals("One synthesis per merged block, streaming preference=$streaming",
+                    listOf(expected.first().text.substring(start)) + expected.drop(1).map { it.text },
+                    synchronized(requests) { requests.toList() })
+                context.stopService(Intent(context, HttpReadAloudService::class.java))
+                await("merged HTTP service stops") {
+                    readAloudService(HttpReadAloudService::class.java) == null && !BaseReadAloudService.isRun
+                }
+            }
+        } finally {
+            context.stopService(Intent(context, HttpReadAloudService::class.java))
+            await("merged HTTP cleanup") { readAloudService(HttpReadAloudService::class.java) == null }
+            scenario!!.onActivity { ReadBook.book!!.setTtsEngine(""); ReadAloud.upReadAloudClass() }
+            appDb.httpTTSDao.delete(engine)
+            server.stop()
+            if (!wasBatteryExempt) shell("dumpsys deviceidle whitelist -${context.packageName}")
+        }
+    }
+
     private data class SelectedSpeech(val position: Int, val text: String, val paragraphTail: String)
 
     private fun selectBodyWord(): SelectedSpeech {

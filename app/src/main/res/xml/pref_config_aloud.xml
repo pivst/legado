@@ -44,7 +44,7 @@
         <io.legado.app.lib.prefs.NameListPreference
             android:key="readAloudTargetLength"
             android:dependency="readAloudMergeText"
-            android:defaultValue="400"
+            android:defaultValue="1200"
             android:title="@string/read_aloud_target_length"
             android:summary="@string/read_aloud_target_length_summary"
             android:entries="@array/read_aloud_target_entries"

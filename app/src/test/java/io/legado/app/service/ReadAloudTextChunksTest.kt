@@ -5,6 +5,17 @@ import org.junit.Test
 import kotlin.random.Random
 
 class ReadAloudTextChunksTest {
+    @Test fun `smart mode keeps short chapters whole and balances longer chapters`() {
+        for (length in listOf(1, 400, 1200, 1201, 2000, 2400, 2401, 10000)) {
+            val text = "甲".repeat(length)
+            val chunks = splitReadAloudText(text)
+            assertEquals(text, chunks.joinToString("") { it.text })
+            assertTrue(chunks.all { it.text.length <= 1500 })
+            if (length <= 1200) assertEquals(1, chunks.size)
+            if (length in 1201..2400) assertEquals(2, chunks.size)
+        }
+    }
+
     @Test
     fun `short paragraphs merge with original newlines preserved`() {
         val text = List(20) { "甲".repeat(49) + "\n" }.joinToString("")
@@ -82,7 +93,7 @@ class ReadAloudTextChunksTest {
         assertTrue(splitReadAloudText("", 400).isEmpty())
         assertEquals(listOf(ReadAloudTextChunk("短篇。\n", 0)), splitReadAloudText("短篇。\n", 400))
         assertEquals(100, normalizeReadAloudTarget(Int.MIN_VALUE))
-        assertEquals(1000, normalizeReadAloudTarget(Int.MAX_VALUE))
+        assertEquals(1200, normalizeReadAloudTarget(Int.MAX_VALUE))
     }
 
     @Test

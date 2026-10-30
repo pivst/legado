@@ -218,12 +218,46 @@ class HttpReadAloudService : BaseReadAloudService(),
             AppLog.putDebug("朗读列表为空")
             ReadBook.readAloud()
         } else {
+            prepareColdStartChunk()
             super.play()
             if (useStreamingPlayback) {
                 downloadAndPlayAudiosStream()
             } else {
                 downloadAndPlayAudios()
             }
+        }
+    }
+
+    private fun prepareColdStartChunk() {
+        if (readAloudTargetLength != DEFAULT_READ_ALOUD_TARGET) return
+        val chunk = mergedReadAloudChunks.getOrNull(nowSpeak) ?: return
+        val remaining = chunk.text.substring(paragraphStartPos)
+        if (remaining.length <= 500 || hasSpeakFile(md5SpeakFileName(remaining))) return
+        val first = splitReadAloudText(remaining, 400).first().text.length
+        val cut = paragraphStartPos + first
+        val chunks = mergedReadAloudChunks.toMutableList()
+        chunks[nowSpeak] = ReadAloudTextChunk(chunk.text.substring(0, cut), chunk.start)
+        chunks.add(nowSpeak + 1, ReadAloudTextChunk(chunk.text.substring(cut), chunk.start + cut))
+        mergedReadAloudChunks = chunks
+        contentList = chunks.map { it.text }
+    }
+
+    private suspend fun awaitPrefetchRoom(index: Int, sessionId: Long) {
+        if (readAloudTargetLength == 0) return
+        while (true) {
+            ensureSessionActive(sessionId)
+            val ready = withContext(Main) {
+                var remainingMs = -exoPlayer.currentPosition
+                val timeline = exoPlayer.currentTimeline
+                val window = androidx.media3.common.Timeline.Window()
+                for (i in exoPlayer.currentMediaItemIndex until timeline.windowCount) {
+                    val duration = timeline.getWindow(i, window).durationMs
+                    if (duration > 0) remainingMs += duration
+                }
+                index <= nowSpeak + 2 && remainingMs / exoPlayer.playbackParameters.speed < 180_000
+            }
+            if (ready) return
+            delay(250)
         }
     }
 
@@ -258,6 +292,7 @@ class HttpReadAloudService : BaseReadAloudService(),
                     ensureActive()
                     ensureSessionActive(sessionId)
                     if (index < nowSpeak) return@forEachIndexed
+                    awaitPrefetchRoom(index, sessionId)
                     var text = content
                     if (paragraphStartPos > 0 && index == nowSpeak) {
                         text = text.substring(paragraphStartPos)
@@ -276,7 +311,7 @@ class HttpReadAloudService : BaseReadAloudService(),
                                 createSilentSound(fileName)
                             }
                         }.onFailure {
-                            if (it !is CancellationException && isSessionActive(sessionId)) {
+                            if (it !is CancellationException && isSessionActive(sessionId) && index <= nowSpeak) {
                                 pauseReadAloud()
                             }
                             return@execute
@@ -320,7 +355,16 @@ class HttpReadAloudService : BaseReadAloudService(),
     }
 
     private suspend fun preDownloadAudios(httpTts: HttpTTS, sessionId: Long) {
-        val textChapter = ReadBook.nextTextChapter ?: return
+        val textChapter = kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+            while (true) {
+                ensureSessionActive(sessionId)
+                val next = ReadBook.nextTextChapter
+                if (next != null && next.isCompleted) return@withTimeoutOrNull next
+                delay(250)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            ReadBook.nextTextChapter
+        } ?: return
         val contentList = preDownloadContents(textChapter)
         contentList.forEach { content ->
             currentCoroutineContext().ensureActive()
@@ -590,8 +634,8 @@ class HttpReadAloudService : BaseReadAloudService(),
                             AppLog.put(msg1, e, true)
                             throw e
                         } else {
-                            AppLog.put("TTS下载音频出错，使用无声音频代替。\n朗读文本：$speakText")
-                            break
+                            // Never turn a failed synthesis into silent, skipped book content.
+                            delay(2_000L * downloadErrorNo)
                         }
                     }
                 }

@@ -3,5 +3,5 @@
     <string name="read_aloud_merge_text">合併多段朗讀</string>
     <string name="read_aloud_merge_text_summary">僅網絡朗讀。跨頁合併多段，完整下載每塊後播放，避免重複合成；優先於整頁和串流。</string>
     <string name="read_aloud_target_length">每次朗讀字數</string>
-    <string name="read_aloud_target_length_summary">建議 400 字；按目標的 75%%–125%% 於段尾或句末切分。字數越多，請求越少，首次等待越長。</string>
+    <string name="read_aloud_target_length_summary">智能章节：短章整章，长章约 1200 字一块；冷启动先读短块，播放时预取后续音频。</string>
 </resources>
